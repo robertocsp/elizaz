@@ -1,0 +1,54 @@
+{% extends "admin/base_site.html" %}
+{% load i18n l10n admin_urls static %}
+
+{% block extrahead %}
+    {{ block.super }}
+    {{ media }}
+    <script type="text/javascript" src="{% static 'admin/js/cancel.js' %}"></script>
+{% endblock %}
+
+{% block bodyclass %}{{ block.super }} app-store model-inventory sync-confirmation sync-selected-confirmation{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+<a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
+&rsaquo; <a href="{% url 'admin:app_list' app_label='store' %}">Store</a>
+&rsaquo; <a href="{% url 'admin:store_inventory_changelist' %}">Inventory</a>
+&rsaquo; {% trans 'Sync objects' %}
+</div>
+{% endblock %}
+
+{% block content %}
+{% if perms_lacking %}
+    <p>{% blocktrans %}Your account doesn't have permission to sync the following objects:{% endblocktrans %}</p>
+    <ul>
+    {% for obj in perms_lacking %}
+        <li>{{ obj }}</li>
+    {% endfor %}
+    </ul>
+{% else %}
+    <p>{% blocktrans %}Are you sure you want to sync the selected items from your Inventory? All of the following objects will be updated in your Amazon Store:{% endblocktrans %}</p>
+    <p><strong>Remember you will only be able to sync these objects again in 20 minutes!</strong></p>
+    <h2>{% trans "Summary" %}</h2>
+    <ul>
+        {% for model_name, object_count in model_count %}
+        <li>{{ model_name|capfirst }}: {{ object_count }}</li>
+        {% endfor %}
+    </ul>
+    <h2>{% trans "Objects" %}</h2>
+    {% for syncable_object in syncable_objects %}
+        <ul>{{ syncable_object|unordered_list }}</ul>
+    {% endfor %}
+    <form method="post">{% csrf_token %}
+    <div>
+    {% for obj in queryset %}
+    <input type="hidden" name="{{ action_checkbox_name }}" value="{{ obj.pk|unlocalize }}">
+    {% endfor %}
+    <input type="hidden" name="action" value="sync_inventory">
+    <input type="hidden" name="post" value="yes">
+    <input type="submit" value="{% trans "Yes, I'm sure" %}">
+    <a href="{% url 'admin:store_inventory_changelist' %}" class="button">{% trans "No, take me back" %}</a>
+    </div>
+    </form>
+{% endif %}
+{% endblock %}

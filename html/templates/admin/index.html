@@ -1,0 +1,53 @@
+{% extends "admin/index.html" %}
+{% load i18n static store %}
+
+{% block content %}
+<div id="content-main">
+
+{% if app_list %}
+    {% for app in app_list %}
+        <div class="app-{{ app.app_label }} module">
+        <table>
+        <caption>
+            <a href="{{ app.app_url }}" class="section" title="{% blocktrans with name=app.name %}Models in the {{ name }} application{% endblocktrans %}">{{ app.name }}</a>
+        </caption>
+        {% for model in app.models %}
+            {% get_user_change_url user app=app model=model as user_change_url %}
+{% comment %}
+            {% with 'admin:'|add:app.app_label|add:'_'|add:model.object_name|lower|add:'_change' as change_url %}
+                {% url change_url '4' %}
+            {% endwith %}
+{% endcomment %}
+
+            <tr class="model-{{ model.object_name|lower }}">
+            {% if user_change_url %}
+                <th scope="row"><a href="{{ user_change_url }}">{{ model.name }}</a></th>
+            {% else %}
+                <th scope="row">{{ model.name }}</th>
+            {% endif %}
+
+            {% if model.add_url %}
+                <td><a href="{{ model.add_url }}" class="addlink">{% trans 'Add' %}</a></td>
+            {% else %}
+                <td>&nbsp;</td>
+            {% endif %}
+            {% if user_change_url %}
+                {% if model.view_only %}
+                <td><a href="{{ user_change_url }}" class="viewlink">{% trans 'View' %}</a></td>
+                {% else %}
+                <td><a href="{{ user_change_url }}" class="changelink">{% trans 'Change' %}</a></td>
+                {% endif %}
+            {% else %}
+                <td>&nbsp;</td>
+            {% endif %}
+            </tr>
+
+        {% endfor %}
+        </table>
+        </div>
+    {% endfor %}
+{% else %}
+    <p>{% trans "You don't have permission to view or edit anything." %}</p>
+{% endif %}
+</div>
+{% endblock %}

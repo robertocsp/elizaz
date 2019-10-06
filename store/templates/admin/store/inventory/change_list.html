@@ -1,0 +1,55 @@
+{% extends "admin/change_list.html" %}
+{% load i18n store admin_list %}
+
+{% block messages %}
+{{ block.super }}
+{% if user|has_perm:'store.sync_inventory' %}
+<ul class="messagelist">
+  <li class="warning">
+    <strong>SYNC Information - Maximizing feed performance</strong>
+    <br>
+    You can generally get the best overall feed processing performance by following these guidelines:
+    <br>
+    - Avoid submitting a lot of feeds with only a few records in each feed. When possible, combine the data into less frequent larger feeds.
+    <br>
+    - Upload one feed no more than once every 20 minutes. Allow more time between larger feeds.
+    <br>
+    - Keep file size below 10 MiB (5*221, or 10,485,760 bytes).
+  </li>
+</ul>
+{% endif %}
+{% endblock messages %}
+
+{% block result_list %}
+    {% if action_form and actions_on_top and cl.show_admin_actions %}{% admin_actions %}{% endif %}
+    {% result_list cl %}
+    {% if action_form and actions_on_bottom and cl.show_admin_actions %}{% admin_actions %}{% endif %}
+{% endblock %}
+
+{% block pagination %}
+{% if action_form and actions_on_top and cl.show_admin_actions %}
+<div class="actions">
+  {% if user|has_perm:'store.delete_inventory' %}
+  <button type="button" class="button" title="Delete selected"
+          onclick="django.jQuery('button[id=inventory-btn-action-delete]')[0].click();">Delete selected</button>
+  {% endif %}
+  {% if user|has_perm:'store.sync_inventory' %}
+  <button type="button" class="button" title="Sync Inventory -> Marketplace"
+          onclick="django.jQuery('button[id=inventory-btn-action-sync]')[0].click();">Sync Inventory -> Marketplace</button>
+  <button type="button" class="button" title="Check Sync Status"
+          onclick="django.jQuery('button[id=inventory-btn-action-check]')[0].click();">Check Sync Status</button>
+  {% endif %}
+  {% if actions_selection_counter %}
+      <span class="action-counter" data-actions-icnt="{{ cl.result_list|length }}">{{ selection_note }}</span>
+      {% if cl.result_count != cl.result_list|length %}
+      <span class="all">{{ selection_note_all }}</span>
+      <span class="question">
+          <a href="#" title="{% trans "Click here to select the objects across all pages" %}">{% blocktrans with cl.result_count as total_count %}Select all {{ total_count }} {{ module_name }}{% endblocktrans %}</a>
+      </span>
+      <span class="clear"><a href="#">{% trans "Clear selection" %}</a></span>
+      {% endif %}
+  {% endif %}
+</div>
+{% endif %}
+{{ block.super }}
+{% endblock %}
