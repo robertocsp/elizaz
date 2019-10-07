@@ -36,7 +36,7 @@ with open(os.path.join(CONFIG_DIR, 'keys.txt')) as keys_file:
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['localhost']
+ALLOWED_HOSTS = ['localhost', '54.152.2.199']
 
 # Application definition
 
