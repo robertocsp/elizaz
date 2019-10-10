@@ -3,3 +3,4 @@ amazonseller.egg-info/
 build/
 dist/
 *.pyc
+db.sqlite3

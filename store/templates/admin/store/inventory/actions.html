@@ -6,7 +6,7 @@
 {% block actions-submit %}
 {% if user|has_perm:'store.delete_inventory' %}
 <button type="submit" class="button" title="{% trans 'Delete selected' %}" name="index" value="{{ action_index|default:0 }}" id="inventory-btn-action-delete"
-        onclick="django.jQuery('#inventory-form-action')[0].value = 'delete_selected';">{% trans "Delete selected" %}</button>
+        onclick="django.jQuery('#inventory-form-action')[0].value = 'custom_delete_selected';">{% trans "Delete selected" %}</button>
 {% endif %}
 {% if user|has_perm:'store.sync_inventory' %}
 <button type="submit" class="button" title="{% trans 'Sync Inventory -> Marketplace' %}" name="index" value="{{ action_index|default:0 }}" id="inventory-btn-action-sync"

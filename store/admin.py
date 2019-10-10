@@ -1,17 +1,22 @@
+import logging
+
 from django import forms
 from django.contrib import admin, messages
 from django.contrib.admin import helpers
 from django.contrib.admin.views.main import ChangeList
 from django.contrib.auth import get_permission_codename
+from django.core.exceptions import PermissionDenied
 from django.db import router
 from django.forms import models
 from django.template.response import TemplateResponse
 from django.urls import reverse, NoReverseMatch
+from django.contrib.admin.actions import delete_selected as delete_selected_
 from django.contrib.admin.utils import (
     quote,
     model_ngettext, NestedObjects)
 from django.utils.decorators import method_decorator
 from django.utils.html import format_html
+from django.utils.safestring import mark_safe
 from django.views.decorators.csrf import csrf_protect
 
 from store.models import Store, StoreForm, StoreFile, inventory_form_factory, Inventory, FeedSubmissionInfo
@@ -19,6 +24,7 @@ from utils.aws import update_store, ThrottlingException, get_feed_submission_lis
 from utils.thread_local import get_current_user
 
 
+logger = logging.getLogger(__name__)
 csrf_protect_m = method_decorator(csrf_protect)
 
 
@@ -140,19 +146,9 @@ class ActionForm(forms.Form):
         initial=0,
         widget=forms.HiddenInput({'class': 'select-across'}),
     )
-    # action = forms.CharField(widget=forms.HiddenInput,
-    #                          initial='delete_selected',
-    #                          label='Delete Selected'
-    #                          )
-    # select_across = forms.BooleanField(
-    #                                    label='',
-    #                                    required=False,
-    #                                    initial=0,
-    #                                    widget=forms.HiddenInput({'class': 'select-across'}),
-    #                                    )
 
 
-def update_aws(modeladmin, request, queryset):
+def update_aws(modeladmin, request, queryset, operation):
     if request.method == 'POST':
         n = queryset.count()
         if n:
@@ -164,12 +160,12 @@ def update_aws(modeladmin, request, queryset):
                     previous_obj = objects.pop()
                     objects.add(previous_obj)
                     if previous_obj.store.id != obj.store.id:
-                        call_mws(objects, previous_obj, throttlings)
+                        call_mws(objects, previous_obj, throttlings, operation)
                         objects.clear()
                 objects.add(obj)
             previous_obj = objects.pop()
             objects.add(previous_obj)
-            call_mws(objects, previous_obj, throttlings)
+            call_mws(objects, previous_obj, throttlings, operation)
             # modeladmin.log_deletion(request, obj, obj_display)
             if len(throttlings):
                 for throttling in throttlings:
@@ -182,17 +178,21 @@ def update_aws(modeladmin, request, queryset):
     return None
 
 
-def call_mws(objects, previous_obj, throttling):
+def call_mws(objects, previous_obj, throttling, operation):
     try:
         store = Store.objects.get(seller_id=previous_obj.store.seller_id)
         store.last_execution, product_return, price_return, inventory_return = update_store(store.seller_id,
                                                                                             store.auth_token, objects,
                                                                                             store.last_execution,
-                                                                                            store.name)
+                                                                                            store.name,
+                                                                                            operation)
         store.save()
-        save_return(product_return['FeedSubmissionInfo'], store)
-        save_return(price_return['FeedSubmissionInfo'], store)
-        save_return(inventory_return['FeedSubmissionInfo'], store)
+        if product_return:
+            save_return(product_return['FeedSubmissionInfo'], store)
+        if price_return:
+            save_return(price_return['FeedSubmissionInfo'], store)
+        if inventory_return:
+            save_return(inventory_return['FeedSubmissionInfo'], store)
     except ThrottlingException as e:
         throttling.add(e)
     # TODO troca SYNC para TRUE somente quando estiver no estado de DONE E SEM ERROS!!!
@@ -258,15 +258,15 @@ def get_synced_objects(modeladmin, objs, request, admin_site):
 class InventoryAdmin(admin.ModelAdmin):
     add_form = InventoryCreationForm
     change_form = InventoryChangeForm
-    list_display = ('is_synced', 'upc', '_asin', '_item_name', 'sku', 'sku_vendor', 'cost_price', 'drop_fee',
+    list_display = ('_sync_status', 'upc', '_asin', '_item_name', 'sku', 'sku_vendor', 'cost_price', 'drop_fee',
                     'shipment_price', 'standard_price', 'quantity', 'condition', 'handling_time', 'wholesale_name',
                     'csv_update_number', 'csv_datetime', 'csv_filename',)
     list_display_links = ('upc',)
-    readonly_fields = ('is_synced', 'csv_filename', 'csv_datetime', 'csv_update_number')
+    readonly_fields = ('_sync_status', 'csv_filename', 'csv_datetime', 'csv_update_number')
     fieldsets = (
         (None, {
             'classes': ('wide',),
-            'fields': ('is_synced', 'store', 'upc', 'sku', 'sku_vendor', 'cost_price', 'drop_fee', 'shipment_price',
+            'fields': ('_sync_status', 'store', 'upc', 'sku', 'sku_vendor', 'cost_price', 'drop_fee', 'shipment_price',
                        'standard_price', 'quantity', 'condition', 'handling_time', 'wholesale_name', 'csv_filename',
                        'csv_datetime', 'csv_update_number'),
         }),
@@ -278,10 +278,28 @@ class InventoryAdmin(admin.ModelAdmin):
                        'standard_price', 'quantity', 'condition', 'handling_time', 'wholesale_name',),
         }),
     )
-    list_filter = ('is_synced', 'csv_update_number',)
+    list_filter = ('csv_update_number',)
     action_form = ActionForm
-    actions = ['sync_inventory', 'check_sync_status']
+    actions = ['custom_delete_selected', 'sync_inventory', 'check_sync_status']
     list_per_page = 1000
+
+    def sync_status_image(self, i):
+        switcher = {
+            0: lambda: mark_safe(
+                '<img src="/static/admin/img/icon-no.svg" alt="Not synced">'
+            ),
+            1: lambda: mark_safe(
+                '<img src="/static/admin/img/icon-yes.svg" alt="Synced">'
+            ),
+            2: lambda: mark_safe(
+                '<img src="/static/admin/img/icon-alert.svg" alt="Awaiting check sync status">'
+            ),
+        }
+        func = switcher.get(i, lambda: 'Invalid')
+        return func()
+
+    def _sync_status(self, obj):
+        return self.sync_status_image(obj.sync_status)
 
     def _asin(self, obj):
         return '-' if obj.asin is None else obj.asin
@@ -289,15 +307,28 @@ class InventoryAdmin(admin.ModelAdmin):
     def _item_name(self, obj):
         return '-' if obj.item_name is None else obj.item_name
 
+    def custom_delete_selected(self, request, queryset):
+        if not self.has_delete_permission(request):
+            raise PermissionDenied
+        if request.POST.get('post'):
+            delete_selected_(self, request, queryset)
+            update_aws(self, request, queryset, '-')
+            return None
+        return delete_selected_(self, request, queryset)
+
+    custom_delete_selected.short_description = 'Delete selected objects'
+
     def check_sync_status(self, request, queryset):
         if request.user.is_superuser:
             store = request.POST.get('check_store_action')
         else:
-            store = request.user.store
+            store = request.user.store.id
         if not store and request.POST.get('post'):
             self.message_user(request, 'Store must be selected in order to perform action on it.', messages.WARNING)
         elif store and request.POST.get('post'):
-            store = Store.objects.get()
+            logger.debug('=== STORE ===')
+            logger.debug(store)
+            store = Store.objects.get(pk=store)
             feed_submission_info_list = FeedSubmissionInfo.objects.filter(store=store).order_by('-submitted_date')[:3]
             feed_submission_list, ended_with_error, did_not_complete = get_feed_submission_list(
                 store.seller_id,
@@ -338,7 +369,7 @@ class InventoryAdmin(admin.ModelAdmin):
 
     def sync_inventory(self, request, queryset):
         if request.POST.get('post'):
-            update_aws(self, request, queryset)
+            update_aws(self, request, queryset, '+')
             return None
         syncable_objects, model_count, perms_needed, protected = get_synced_objects(self, queryset, request,
                                                                                     self.admin_site)
@@ -362,6 +393,12 @@ class InventoryAdmin(admin.ModelAdmin):
 
     sync_inventory.short_description = "Sync Inventory -> Marketplace"
     sync_inventory.allowed_permissions = ('sync',)
+
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        if 'delete_selected' in actions:
+            del actions['delete_selected']
+        return actions
 
     def has_sync_permission(self, request, obj=None):
         if request.user.is_superuser or request.user.store:

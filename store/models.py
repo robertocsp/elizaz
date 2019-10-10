@@ -185,7 +185,13 @@ class Inventory(models.Model):
     condition = models.CharField('Condition', max_length=200)
     handling_time = models.IntegerField('Handling Time')
     wholesale_name = models.CharField('Wholesale Name', max_length=200)
-    is_synced = models.BooleanField('Synced', default=False)
+    # is_synced = models.BooleanField('Synced', default=False)
+    SYNC_STATUS_CHOICES = (
+        (0, 'Not synced'),
+        (1, 'Synced'),
+        (2, 'Awaiting check sync status'),
+    )
+    sync_status = models.SmallIntegerField('Sync Status', choices=SYNC_STATUS_CHOICES, default=0)
     create_date = models.DateField('Creation date', auto_now_add=True)
     csv_filename = models.CharField('Filename', max_length=200, null=True, blank=True)
     csv_datetime = models.DateTimeField('Date Time', null=True, blank=True)

@@ -70,6 +70,29 @@ def build_product_feed_body(seller_id, items):
     return amz_envelope.encode('utf-8')
 
 
+def build_product_delete_feed_body(seller_id, items):
+    amz_envelope = ''.join(['<?xml version="1.0" ?>'] +
+                           ['<AmazonEnvelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '] +
+                           ['xsi:noNamespaceSchemaLocation="amznenvelope.xsd">'] +
+                           ['<Header>'] +
+                           ['<DocumentVersion>1.01</DocumentVersion>'] +
+                           ['<MerchantIdentifier>%(seller_id)s</MerchantIdentifier>' % {'seller_id': seller_id}] +
+                           ['</Header>'] +
+                           ['<MessageType>Product</MessageType>'] +
+                           ['<Message>'
+                            '<MessageID>%(index)s</MessageID>'
+                            '<OperationType>Delete</OperationType>'
+                            '<Product>'
+                            '<SKU>%(sku)s</SKU>'
+                            '</Product>'
+                            '</Message>' % {'index': (index + 1),
+                                            'sku': item.sku} for index, item in enumerate(items)] +
+                           ['</AmazonEnvelope>'])
+    logger.debug('============PRODUCT DELETE============')
+    logger.debug(amz_envelope.encode('utf-8'))
+    return amz_envelope.encode('utf-8')
+
+
 def build_price_feed_body(seller_id, items):
     amz_envelope = ''.join(['<?xml version="1.0" ?>'] +
                            ['<AmazonEnvelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '] +
@@ -127,19 +150,24 @@ class ThrottlingException(Exception):
         Exception.__init__(self, *args)
 
 
-def update_store(seller_id, auth_token, items, store_last_execution, store_name):
+def update_store(seller_id, auth_token, items, store_last_execution, store_name, operation):
     feeds_api = mws.Feeds(access_key=MWS_ACCESS_KEY,
                           secret_key=MWS_SECRET_KEY,
                           account_id=seller_id,
                           auth_token=auth_token)
     # BLOCK FOR 20 MINUTES BY SELLER_ID
     if store_last_execution is None or datetime.now(tz=timezone.utc) >= (store_last_execution + timedelta(minutes=20)):
-        product_return = feeds_api.submit_feed(build_product_feed_body(seller_id, items), '_POST_PRODUCT_DATA_')
-        price_return = feeds_api.submit_feed(build_price_feed_body(seller_id, items), '_POST_PRODUCT_PRICING_DATA_')
-        inventory_return = feeds_api.submit_feed(build_inventory_feed_body(seller_id, items),
-                                                 '_POST_INVENTORY_AVAILABILITY_DATA_')
-        return datetime.now(tz=timezone.utc), product_return.parsed, price_return.parsed, inventory_return.parsed
-        # SAVE DATETIME NOW FOR THE 20 MINUTES CHECK
+        if operation == 'update':
+            product_return = feeds_api.submit_feed(build_product_feed_body(seller_id, items), '_POST_PRODUCT_DATA_')
+            price_return = feeds_api.submit_feed(build_price_feed_body(seller_id, items), '_POST_PRODUCT_PRICING_DATA_')
+            inventory_return = feeds_api.submit_feed(build_inventory_feed_body(seller_id, items),
+                                                     '_POST_INVENTORY_AVAILABILITY_DATA_')
+            return datetime.now(tz=timezone.utc), product_return.parsed, price_return.parsed, inventory_return.parsed
+            # SAVE DATETIME NOW FOR THE 20 MINUTES CHECK
+        elif operation == 'delete':
+            product_return = feeds_api.submit_feed(build_product_delete_feed_body(seller_id, items),
+                                                   '_POST_PRODUCT_DATA_')
+            return datetime.now(tz=timezone.utc), product_return.parsed, None, None
     else:
         time_left = (store_last_execution + timedelta(minutes=20)) - datetime.now(tz=timezone.utc)
         minutes = time_left.seconds // 60

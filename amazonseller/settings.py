@@ -163,13 +163,11 @@ LOGGING = {
     },
     'handlers': {
         'file': {
-            'level': 'DEBUG',
             'class': 'logging.FileHandler',
             'filename': os.path.join(LOG_DIR, 'debug.log'),
             'formatter': 'verbose',
         },
         'console': {
-            'level': 'INFO',
             'filters': ['require_debug_true'],
             'class': 'logging.StreamHandler',
             'formatter': 'simple'
@@ -192,6 +190,11 @@ LOGGING = {
             'propagate': False,
         },
         'utils': {
+            'handlers': ['file', 'console'],
+            'level': 'INFO',
+            'propagate': True,
+        },
+        'store': {
             'handlers': ['file', 'console'],
             'level': 'INFO',
             'propagate': True,
