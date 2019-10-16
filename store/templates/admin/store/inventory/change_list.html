@@ -34,10 +34,10 @@
           onclick="django.jQuery('button[id=inventory-btn-action-delete]')[0].click();">Delete selected</button>
   {% endif %}
   {% if user|has_perm:'store.sync_inventory' %}
-  <button type="button" class="button" title="Sync Inventory -> Marketplace"
-          onclick="django.jQuery('button[id=inventory-btn-action-sync]')[0].click();">Sync Inventory -> Marketplace</button>
-  <button type="button" class="button" title="Check Sync Status"
-          onclick="django.jQuery('button[id=inventory-btn-action-check]')[0].click();">Check Sync Status</button>
+  <button type="button" class="button" title="Feed Inventory -> Marketplace"
+          onclick="django.jQuery('button[id=inventory-btn-action-sync]')[0].click();">Feed Inventory -> Marketplace</button>
+  <button type="button" class="button" title="Check Feed Status"
+          onclick="django.jQuery('button[id=inventory-btn-action-check]')[0].click();">Check Feed Status</button>
   {% endif %}
   {% if actions_selection_counter %}
       <span class="action-counter" data-actions-icnt="{{ cl.result_list|length }}">{{ selection_note }}</span>

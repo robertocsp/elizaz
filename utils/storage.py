@@ -3,7 +3,6 @@ import shutil
 from django.core.files.storage import FileSystemStorage
 from django.conf import settings
 import os
-import logging
 
 
 class OverWriteStorage(FileSystemStorage):

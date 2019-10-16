@@ -1,7 +1,7 @@
 import uuid
 
 from django import forms
-from django.db import models
+from django.db import models, DEFAULT_DB_ALIAS
 from django.db.models import Max
 from django.db.models.signals import post_save, post_delete, pre_save
 from django.dispatch import receiver
@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from store.validators import validate_csv_file_extension
 from utils import aws
+from utils.helper import normalize_condition, get_conditions_tuple
 from utils.storage import OverWriteStorage, clear_folder
 
 _UPDATE_INVENTORY = 'update_inventory'
@@ -79,35 +80,30 @@ def _save_file(sender, instance, created, **kwargs):
                 inventory.save()
 
 
-def normalize_condition(condition):
-    if condition is None:
-        return
-    conditions = {
-        'new': 'New',
-        'usedlikenew': 'UsedLikeNew',
-        'usedverygood': 'UsedVeryGood',
-        'usedgood': 'UsedGood',
-        'usedacceptable': 'UsedAcceptable',
-        'collectiblelikenew': 'CollectibleLikeNew',
-        'collectibleverygood': 'CollectibleVeryGood',
-        'collectiblegood': 'CollectibleGood',
-        'collectibleacceptable': 'CollectibleAcceptable',
-        'refurbished': 'Refurbished',
-        'club': 'Club'
-    }
-    return conditions[condition.replace(' ', '').lower()]
-
-
 def populate_inventory(columns, instance, inventory):
     inventory.upc = columns[0]
     inventory.sku_vendor = columns[2]
     inventory.cost_price = columns[3]
     inventory.drop_fee = columns[4]
     inventory.shipment_price = columns[5]
-    inventory.standard_price = columns[6]
-    inventory.quantity = columns[7]
-    inventory.condition = normalize_condition(columns[8])
-    inventory.handling_time = columns[9]
+
+    if inventory.standard_price != columns[6]:
+        inventory.sync_status = 0
+    inventory.standard_price = columns[6]  # feed
+
+    if inventory.quantity != columns[7]:
+        inventory.sync_status = 0
+    inventory.quantity = columns[7]  # feed
+
+    normalized_condition = normalize_condition(columns[8])
+    if inventory.condition != normalized_condition:
+        inventory.sync_status = 0
+    inventory.condition = normalized_condition  # feed
+
+    if inventory.handling_time != columns[9]:
+        inventory.sync_status = 0
+    inventory.handling_time = columns[9]  # feed
+
     inventory.wholesale_name = columns[10]
     inventory.csv_filename = str(instance.csv).rsplit('/', 1)[1]
     inventory.csv_datetime = instance.csv_datetime
@@ -137,6 +133,17 @@ class StoreForm(ModelForm):
     class Meta:
         model = Store
         exclude = ['last_execution']
+
+
+class FeedSubmissionInfo(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    feed_submission_id = models.CharField('Feed Submission ID', max_length=200)
+    feed_type = models.CharField('Feed Type', max_length=200)
+    submitted_date = models.DateTimeField('Submitted Date')
+    feed_processing_status = models.CharField('Feed Processing Status', max_length=200)
+    started_processing_date = models.DateTimeField('Start Processing Date', blank=True, null=True)
+    completed_processing_date = models.DateTimeField('Complete Processing Date', blank=True, null=True)
+    store = models.ForeignKey(Store, on_delete=models.CASCADE)
 
 
 def inventory_form_factory(request, obj):
@@ -182,10 +189,9 @@ class Inventory(models.Model):
     shipment_price = models.DecimalField('Shipment Price', max_digits=12, decimal_places=2)
     standard_price = models.DecimalField('Standard Price', max_digits=12, decimal_places=2)
     quantity = models.IntegerField('Quantity')
-    condition = models.CharField('Condition', max_length=200)
+    condition = models.CharField('Condition', max_length=200, choices=get_conditions_tuple())
     handling_time = models.IntegerField('Handling Time')
     wholesale_name = models.CharField('Wholesale Name', max_length=200)
-    # is_synced = models.BooleanField('Synced', default=False)
     SYNC_STATUS_CHOICES = (
         (0, 'Not synced'),
         (1, 'Synced'),
@@ -197,24 +203,40 @@ class Inventory(models.Model):
     csv_datetime = models.DateTimeField('Date Time', null=True, blank=True)
     csv_update_number = models.BigIntegerField('Update Number', null=True, blank=True)
     store = models.ForeignKey(Store, on_delete=models.CASCADE, blank=True, null=True)
+    feed_submission_info = models.ManyToManyField(FeedSubmissionInfo, blank=True)
+
+    __original_standard_price = None
+    __original_quantity = None
+    __original_condition = None
+    __original_handling_time = None
 
     class Meta:
         verbose_name = 'Inventory'
         verbose_name_plural = 'Inventory'
         permissions = (
-            ('sync_inventory', 'Can sync permission'),
+            ('sync_inventory', 'Can feed permission'),
         )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.__original_standard_price = self.standard_price
+        self.__original_quantity = self.quantity
+        self.__original_condition = self.condition
+        self.__original_handling_time = self.handling_time
 
     def __str__(self):
         return self.sku
 
+    def save(self, force_insert=False, force_update=False, using=DEFAULT_DB_ALIAS, update_fields=None):
+        if self.__original_standard_price != self.standard_price \
+                or self.__original_quantity != self.quantity \
+                or self.__original_condition != self.condition \
+                or self.__original_handling_time != self.handling_time:
+            self.sync_status = 0
 
-class FeedSubmissionInfo(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    feed_submission_id = models.CharField('Feed Submission ID', max_length=200)
-    feed_type = models.CharField('Feed Type', max_length=200)
-    submitted_date = models.DateTimeField('Submitted Date')
-    feed_processing_status = models.CharField('Feed Processing Status', max_length=200)
-    started_processing_date = models.DateTimeField('Start Processing Date', blank=True, null=True)
-    completed_processing_date = models.DateTimeField('Start Processing Date', blank=True, null=True)
-    store = models.ForeignKey(Store, on_delete=models.CASCADE)
+        super().save(force_insert, force_update, using, update_fields)
+
+        self.__original_standard_price = self.standard_price
+        self.__original_quantity = self.quantity
+        self.__original_condition = self.condition
+        self.__original_handling_time = self.handling_time

@@ -6,7 +6,8 @@ register = template.Library()
 
 @register.simple_tag
 def get_user_change_url(user, **kwargs):
-    if user.is_superuser or kwargs['model']['object_name'].lower() == 'inventory':
+    model_object_name = kwargs['model']['object_name'].lower()
+    if user.is_superuser or model_object_name == 'inventory' or model_object_name == 'feedsubmissioninfo':
         return kwargs['model']['admin_url']
     elif user.store:
         return reverse('admin:%s_%s_change' % (kwargs['app']['app_label'],

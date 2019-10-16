@@ -27,8 +27,8 @@
     {% endfor %}
     </ul>
 {% else %}
-    <p>{% blocktrans %}Are you sure you want to sync the selected items from your Inventory? All of the following objects will be updated in your Amazon Store:{% endblocktrans %}</p>
-    <p><strong>Remember you will only be able to sync these objects again in 20 minutes!</strong></p>
+    <p>{% blocktrans %}Are you sure you want to feed the selected items from your Inventory? All of the following objects will be updated in your Amazon Store:{% endblocktrans %}</p>
+    <!--p><strong>Remember you will only be able to feed these objects again in 20 minutes!</strong></p-->
     <h2>{% trans "Summary" %}</h2>
     <ul>
         {% for model_name, object_count in model_count %}

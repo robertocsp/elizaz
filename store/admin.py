@@ -7,7 +7,9 @@ from django.contrib.admin.views.main import ChangeList
 from django.contrib.auth import get_permission_codename
 from django.core.exceptions import PermissionDenied
 from django.db import router
+from django.db.models import Q
 from django.forms import models
+from django.http import HttpResponseRedirect
 from django.template.response import TemplateResponse
 from django.urls import reverse, NoReverseMatch
 from django.contrib.admin.actions import delete_selected as delete_selected_
@@ -20,7 +22,8 @@ from django.utils.safestring import mark_safe
 from django.views.decorators.csrf import csrf_protect
 
 from store.models import Store, StoreForm, StoreFile, inventory_form_factory, Inventory, FeedSubmissionInfo
-from utils.aws import update_store, ThrottlingException, get_feed_submission_list
+from utils.aws import update_store, ThrottlingException, get_feed_submission_list, get_feed_submission_result, \
+    DataCorruptionException
 from utils.thread_local import get_current_user
 
 
@@ -171,7 +174,7 @@ def update_aws(modeladmin, request, queryset, operation):
                 for throttling in throttlings:
                     modeladmin.message_user(request, str(throttling), messages.WARNING)
             else:
-                modeladmin.message_user(request, 'Successfully synced %(count)d %(items)s.' % {
+                modeladmin.message_user(request, 'Successfully fed %(count)d %(items)s.' % {
                     "count": n, "items": model_ngettext(modeladmin.opts, n)
                 }, messages.SUCCESS)
     # Return None to display the change list page again.
@@ -181,21 +184,24 @@ def update_aws(modeladmin, request, queryset, operation):
 def call_mws(objects, previous_obj, throttling, operation):
     try:
         store = Store.objects.get(seller_id=previous_obj.store.seller_id)
-        store.last_execution, product_return, price_return, inventory_return = update_store(store.seller_id,
-                                                                                            store.auth_token, objects,
-                                                                                            store.last_execution,
-                                                                                            store.name,
+        store.last_execution, product_return, price_return, inventory_return = update_store(store,
+                                                                                            objects,
                                                                                             operation)
         store.save()
+        feed_infos = []
         if product_return:
-            save_return(product_return['FeedSubmissionInfo'], store)
+            feed_infos.append(save_return(product_return['FeedSubmissionInfo'], store))
         if price_return:
-            save_return(price_return['FeedSubmissionInfo'], store)
+            feed_infos.append(save_return(price_return['FeedSubmissionInfo'], store))
         if inventory_return:
-            save_return(inventory_return['FeedSubmissionInfo'], store)
+            feed_infos.append(save_return(inventory_return['FeedSubmissionInfo'], store))
+        for item in objects:
+            item.sync_status = 1
+            for feed_info in feed_infos:
+                item.feed_submission_info.add(feed_info)
+        Inventory.objects.bulk_update(objects, ['sync_status'])
     except ThrottlingException as e:
         throttling.add(e)
-    # TODO troca SYNC para TRUE somente quando estiver no estado de DONE E SEM ERROS!!!
 
 
 def save_return(feed_submission_info, store):
@@ -209,6 +215,34 @@ def save_return(feed_submission_info, store):
                                    feed_processing_status=feed_processing_status,
                                    store=store)
     feed_info.save()
+    return feed_info
+
+
+class FeedObjects(NestedObjects):
+    def collect(self, objs, source=None, source_attr=None, **kwargs):
+        for obj in objs:
+            self.add_edge(None, obj)
+            self.model_objs[Inventory].add(obj)
+
+    def _nested(self, obj, seen, format_callback):
+        if obj in seen:
+            return []
+        seen.add(obj)
+        if format_callback:
+            ret = [format_callback(obj)]
+        else:
+            ret = [obj]
+        return ret
+
+    def nested(self, format_callback=None):
+        """
+        Return the graph as a nested list.
+        """
+        seen = set()
+        roots = []
+        for root in self.edges.get(None, ()):
+            roots.extend(self._nested(root, seen, format_callback))
+        return roots
 
 
 def get_synced_objects(modeladmin, objs, request, admin_site):
@@ -225,7 +259,7 @@ def get_synced_objects(modeladmin, objs, request, admin_site):
         return [], {}, set(), []
     else:
         using = router.db_for_write(Inventory)
-    collector = NestedObjects(using=using)
+    collector = FeedObjects(using=using)
     collector.collect(objs)
     perms_needed = set()
 
@@ -258,15 +292,15 @@ def get_synced_objects(modeladmin, objs, request, admin_site):
 class InventoryAdmin(admin.ModelAdmin):
     add_form = InventoryCreationForm
     change_form = InventoryChangeForm
-    list_display = ('_sync_status', 'upc', '_asin', '_item_name', 'sku', 'sku_vendor', 'cost_price', 'drop_fee',
+    list_display = ('_feed_status', 'upc', '_asin', '_item_name', 'sku', 'sku_vendor', 'cost_price', 'drop_fee',
                     'shipment_price', 'standard_price', 'quantity', 'condition', 'handling_time', 'wholesale_name',
                     'csv_update_number', 'csv_datetime', 'csv_filename',)
     list_display_links = ('upc',)
-    readonly_fields = ('_sync_status', 'csv_filename', 'csv_datetime', 'csv_update_number')
+    readonly_fields = ('_feed_status', 'csv_filename', 'csv_datetime', 'csv_update_number')
     fieldsets = (
         (None, {
             'classes': ('wide',),
-            'fields': ('_sync_status', 'store', 'upc', 'sku', 'sku_vendor', 'cost_price', 'drop_fee', 'shipment_price',
+            'fields': ('_feed_status', 'store', 'upc', 'sku', 'sku_vendor', 'cost_price', 'drop_fee', 'shipment_price',
                        'standard_price', 'quantity', 'condition', 'handling_time', 'wholesale_name', 'csv_filename',
                        'csv_datetime', 'csv_update_number'),
         }),
@@ -283,23 +317,24 @@ class InventoryAdmin(admin.ModelAdmin):
     actions = ['custom_delete_selected', 'sync_inventory', 'check_sync_status']
     list_per_page = 1000
 
-    def sync_status_image(self, i):
+    def feed_status_image(self, i):
         switcher = {
             0: lambda: mark_safe(
-                '<img src="/static/admin/img/icon-no.svg" alt="Not synced">'
+                '<img src="/static/admin/img/icon-no.svg" alt="Not fed" title="Not fed">'
             ),
             1: lambda: mark_safe(
-                '<img src="/static/admin/img/icon-yes.svg" alt="Synced">'
+                '<img src="/static/admin/img/icon-yes.svg" alt="Fed" title="Fed">'
             ),
             2: lambda: mark_safe(
-                '<img src="/static/admin/img/icon-alert.svg" alt="Awaiting check sync status">'
+                '<img src="/static/admin/img/icon-alert.svg" alt="Awaiting check feed status" '
+                'title="Awaiting check feed status">'
             ),
         }
         func = switcher.get(i, lambda: 'Invalid')
         return func()
 
-    def _sync_status(self, obj):
-        return self.sync_status_image(obj.sync_status)
+    def _feed_status(self, obj):
+        return self.feed_status_image(obj.sync_status)
 
     def _asin(self, obj):
         return '-' if obj.asin is None else obj.asin
@@ -311,8 +346,8 @@ class InventoryAdmin(admin.ModelAdmin):
         if not self.has_delete_permission(request):
             raise PermissionDenied
         if request.POST.get('post'):
+            update_aws(self, request, queryset, 'delete')
             delete_selected_(self, request, queryset)
-            update_aws(self, request, queryset, '-')
             return None
         return delete_selected_(self, request, queryset)
 
@@ -329,29 +364,40 @@ class InventoryAdmin(admin.ModelAdmin):
             logger.debug('=== STORE ===')
             logger.debug(store)
             store = Store.objects.get(pk=store)
-            feed_submission_info_list = FeedSubmissionInfo.objects.filter(store=store).order_by('-submitted_date')[:3]
-            feed_submission_list, ended_with_error, did_not_complete = get_feed_submission_list(
-                store.seller_id,
-                store.auth_token,
-                [feed_submission_info.feed_submission_id for feed_submission_info in feed_submission_info_list])
-            for feed_submission in feed_submission_list:
-                feed_submission_info = FeedSubmissionInfo.objects.get(feed_submission_id=
-                                                                      feed_submission['FeedSubmissionId']['value'])
-                feed_submission_info.feed_processing_status = feed_submission['FeedProcessingStatus']['value']
-                feed_submission_info.started_processing_date = feed_submission['StartedProcessingDate']['value']
-                feed_submission_info.completed_processing_date = feed_submission['CompletedProcessingDate']['value']
-                feed_submission_info.save()
-            if len(ended_with_error) > 0:
-                self.message_user(request, 'The following feeds ended up with errors: %(feeds)s. Please check the logs '
-                                           'for more information.' %
-                                  {'feeds': ', '.join(ended_with_error)}, messages.WARNING)
-            if len(did_not_complete) > 0:
-                self.message_user(request, 'The following feeds did not complete yet: %(feeds)s. Please check the logs '
-                                           'for more information.' %
-                                  {'feeds': ', '.join(did_not_complete)}, messages.WARNING)
-            if len(ended_with_error) == 0 and len(did_not_complete) == 0:
-                self.message_user(request, 'All feeds completed without any errors or warnings.', messages.SUCCESS)
-            return None
+            feed_submission_info_list = FeedSubmissionInfo.objects.filter(
+                Q(feed_processing_status='_SUBMITTED_') | Q(feed_processing_status='_IN_PROGRESS_'),
+                store=store)
+            if feed_submission_info_list:
+                feeds = [feed_submission_info.feed_submission_id for feed_submission_info in feed_submission_info_list]
+                feed_submission_list = get_feed_submission_list(
+                    store.seller_id,
+                    store.auth_token,
+                    feeds)
+                for feed_submission in feed_submission_list:
+                    feed_submission_info = FeedSubmissionInfo.objects.get(feed_submission_id=
+                                                                          feed_submission['FeedSubmissionId']['value'])
+                    feed_submission_info.feed_processing_status = feed_submission['FeedProcessingStatus']['value']
+                    if 'StartedProcessingDate' in feed_submission:
+                        feed_submission_info.started_processing_date = feed_submission['StartedProcessingDate']['value']
+                    if 'CompletedProcessingDate' in feed_submission:
+                        feed_submission_info.completed_processing_date = \
+                            feed_submission['CompletedProcessingDate']['value']
+                    if feed_submission_info.feed_processing_status == '_DONE_':
+                        try:
+                            feed_submission_info.feed_processing_status = get_feed_submission_result(
+                                store.seller_id,
+                                store.auth_token,
+                                feed_submission['FeedSubmissionId']['value']
+                            )
+                        except DataCorruptionException:
+                            feed_submission_info.feed_processing_status = '_DATA_CORRUPTION_'
+                    feed_submission_info.save()
+                if len(feeds):
+                    self.message_user(request, 'The following feeds have been checked: %(items)s' % {
+                        "items": ', '.join(feeds)
+                    }, messages.INFO)
+            return HttpResponseRedirect(reverse('admin:%s_%s_changelist' % ('store', 'feedsubmissioninfo'),
+                                                current_app='admin'))
 
         context = {
             **self.admin_site.each_context(request),
@@ -364,12 +410,12 @@ class InventoryAdmin(admin.ModelAdmin):
 
         return TemplateResponse(request, "admin/store/inventory/select_store.html", context)
 
-    check_sync_status.short_description = "Check Sync Status"
+    check_sync_status.short_description = "Check Feed Status"
     check_sync_status.allowed_permissions = ('sync',)
 
     def sync_inventory(self, request, queryset):
         if request.POST.get('post'):
-            update_aws(self, request, queryset, '+')
+            update_aws(self, request, queryset, 'update')
             return None
         syncable_objects, model_count, perms_needed, protected = get_synced_objects(self, queryset, request,
                                                                                     self.admin_site)
@@ -391,7 +437,7 @@ class InventoryAdmin(admin.ModelAdmin):
 
         return TemplateResponse(request, "admin/store/inventory/sync_selected_confirmation.html", context)
 
-    sync_inventory.short_description = "Sync Inventory -> Marketplace"
+    sync_inventory.short_description = "Feed Inventory -> Marketplace"
     sync_inventory.allowed_permissions = ('sync',)
 
     def get_actions(self, request):
@@ -474,3 +520,61 @@ class InventoryAdmin(admin.ModelAdmin):
 
 
 admin.site.register(Inventory, InventoryAdmin)
+
+
+class FeedSubmissionInfoAdmin(admin.ModelAdmin):
+    list_display = ('feed_submission_id',
+                    'feed_type',
+                    'feed_processing_status',
+                    '_feed_items',
+                    'submitted_date',
+                    'started_processing_date',
+                    'completed_processing_date',
+                    'store',)
+    fieldsets = (
+        (None, {
+            'classes': ('wide',),
+            'fields': ('feed_submission_id',
+                       'feed_type',
+                       'feed_processing_status',
+                       '_feed_items',
+                       'submitted_date',
+                       'started_processing_date',
+                       'completed_processing_date',
+                       'store',),
+        }),
+    )
+
+    actions = ['check_sync_status']
+
+    def _feed_items(self, obj):
+        return ', '.join([item.sku for item in obj.inventory_set.all()])
+    _feed_items.short_description = 'Feed Items'
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        if request.user.is_superuser or request.user.store:
+            return super().has_delete_permission(request, obj)
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_view_permission(self, request, obj=None):
+        if request.user.is_superuser or request.user.store:
+            return super().has_view_permission(request, obj)
+        return False
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if not request.user.is_superuser:
+            if request.user.store:
+                qs = qs.filter(store=request.user.store.id)
+            else:
+                qs = qs.filter(store=None)
+        return qs
+
+
+admin.site.register(FeedSubmissionInfo, FeedSubmissionInfoAdmin)
