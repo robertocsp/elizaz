@@ -1,0 +1,39 @@
+{% extends "admin/base_site.html" %}
+{% load i18n l10n admin_urls static %}
+
+{% block extrahead %}
+    {{ block.super }}
+    {{ media }}
+    <script type="text/javascript" src="{% static 'admin/js/cancel.js' %}"></script>
+{% endblock %}
+
+{% block bodyclass %}{{ block.super }} app-store model-feedsubmissioninfo store-selection select-store{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+<a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
+&rsaquo; <a href="{% url 'admin:app_list' app_label='store' %}">Store</a>
+&rsaquo; <a href="{% url 'admin:store_feedsubmissioninfo_changelist' %}">Feed submission infos</a>
+&rsaquo; {% trans 'Check sync status' %}
+</div>
+{% endblock %}
+
+{% block content %}
+    <h2>{% trans "Store" %}</h2>
+    <form method="post">{% csrf_token %}
+    <div>
+    <select name="check_store_action">
+        <option value="">-- Choose the store --</option>
+        {% for store in stores %}
+        <option value="{{ store.id }}">{{ store.name }}</option>
+        {% endfor %}
+    </select>
+    <br><br>
+    <input type="hidden" name="action" value="check_sync_status">
+    <input type="hidden" name="post" value="1">
+    <input type="hidden" name="_selected_action" value="1">
+    <input type="submit" value="{% trans "Yes, I'm sure" %}">
+    <a href="{% url 'admin:store_feedsubmissioninfo_changelist' %}" class="button">{% trans "No, take me back" %}</a>
+    </div>
+    </form>
+{% endblock %}

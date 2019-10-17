@@ -222,7 +222,7 @@ class FeedObjects(NestedObjects):
     def collect(self, objs, source=None, source_attr=None, **kwargs):
         for obj in objs:
             self.add_edge(None, obj)
-            self.model_objs[Inventory].add(obj)
+            self.model_objs[obj._meta.model].add(obj)
 
     def _nested(self, obj, seen, format_callback):
         if obj in seen:
@@ -287,6 +287,61 @@ def get_synced_objects(modeladmin, objs, request, admin_site):
     model_count = {'Inventory': len(objs) for model, objs in collector.model_objs.items()}
 
     return to_sync, model_count, perms_needed, protected
+
+
+def _check_feed_status(modeladmin, request, select_store_template):
+    if request.user.is_superuser:
+        store = request.POST.get('check_store_action')
+    else:
+        store = request.user.store.id
+    if not store and request.POST.get('post'):
+        modeladmin.message_user(request, 'Store must be selected in order to perform action on it.', messages.WARNING)
+    elif store and request.POST.get('post'):
+        logger.debug('=== STORE ===')
+        logger.debug(store)
+        store = Store.objects.get(pk=store)
+        feed_submission_info_list = FeedSubmissionInfo.objects.filter(
+            Q(feed_processing_status='_SUBMITTED_') | Q(feed_processing_status='_IN_PROGRESS_'),
+            store=store)
+        if feed_submission_info_list:
+            feeds = [feed_submission_info.feed_submission_id for feed_submission_info in feed_submission_info_list]
+            feed_submission_list = get_feed_submission_list(
+                store.seller_id,
+                store.auth_token,
+                feeds)
+            for feed_submission in feed_submission_list:
+                feed_submission_info = FeedSubmissionInfo.objects.get(feed_submission_id=
+                                                                      feed_submission['FeedSubmissionId']['value'])
+                feed_submission_info.feed_processing_status = feed_submission['FeedProcessingStatus']['value']
+                if 'StartedProcessingDate' in feed_submission:
+                    feed_submission_info.started_processing_date = feed_submission['StartedProcessingDate']['value']
+                if 'CompletedProcessingDate' in feed_submission:
+                    feed_submission_info.completed_processing_date = \
+                        feed_submission['CompletedProcessingDate']['value']
+                if feed_submission_info.feed_processing_status == '_DONE_':
+                    try:
+                        feed_submission_info.feed_processing_status = get_feed_submission_result(
+                            store.seller_id,
+                            store.auth_token,
+                            feed_submission['FeedSubmissionId']['value']
+                        )
+                    except DataCorruptionException:
+                        feed_submission_info.feed_processing_status = '_DATA_CORRUPTION_'
+                feed_submission_info.save()
+            if len(feeds):
+                modeladmin.message_user(request, 'The following feeds have been checked: %(items)s' % {
+                    "items": ', '.join(feeds)
+                }, messages.INFO)
+        return HttpResponseRedirect(reverse('admin:%s_%s_changelist' % ('store', 'feedsubmissioninfo'),
+                                            current_app='admin'))
+    context = {
+        **modeladmin.admin_site.each_context(request),
+        'title': 'Store selection',
+        'stores': Store.objects.all() if request.user.is_superuser else Store.objects.none(),
+        'media': modeladmin.media,
+    }
+    request.current_app = modeladmin.admin_site.name
+    return TemplateResponse(request, select_store_template, context)
 
 
 class InventoryAdmin(admin.ModelAdmin):
@@ -354,61 +409,7 @@ class InventoryAdmin(admin.ModelAdmin):
     custom_delete_selected.short_description = 'Delete selected objects'
 
     def check_sync_status(self, request, queryset):
-        if request.user.is_superuser:
-            store = request.POST.get('check_store_action')
-        else:
-            store = request.user.store.id
-        if not store and request.POST.get('post'):
-            self.message_user(request, 'Store must be selected in order to perform action on it.', messages.WARNING)
-        elif store and request.POST.get('post'):
-            logger.debug('=== STORE ===')
-            logger.debug(store)
-            store = Store.objects.get(pk=store)
-            feed_submission_info_list = FeedSubmissionInfo.objects.filter(
-                Q(feed_processing_status='_SUBMITTED_') | Q(feed_processing_status='_IN_PROGRESS_'),
-                store=store)
-            if feed_submission_info_list:
-                feeds = [feed_submission_info.feed_submission_id for feed_submission_info in feed_submission_info_list]
-                feed_submission_list = get_feed_submission_list(
-                    store.seller_id,
-                    store.auth_token,
-                    feeds)
-                for feed_submission in feed_submission_list:
-                    feed_submission_info = FeedSubmissionInfo.objects.get(feed_submission_id=
-                                                                          feed_submission['FeedSubmissionId']['value'])
-                    feed_submission_info.feed_processing_status = feed_submission['FeedProcessingStatus']['value']
-                    if 'StartedProcessingDate' in feed_submission:
-                        feed_submission_info.started_processing_date = feed_submission['StartedProcessingDate']['value']
-                    if 'CompletedProcessingDate' in feed_submission:
-                        feed_submission_info.completed_processing_date = \
-                            feed_submission['CompletedProcessingDate']['value']
-                    if feed_submission_info.feed_processing_status == '_DONE_':
-                        try:
-                            feed_submission_info.feed_processing_status = get_feed_submission_result(
-                                store.seller_id,
-                                store.auth_token,
-                                feed_submission['FeedSubmissionId']['value']
-                            )
-                        except DataCorruptionException:
-                            feed_submission_info.feed_processing_status = '_DATA_CORRUPTION_'
-                    feed_submission_info.save()
-                if len(feeds):
-                    self.message_user(request, 'The following feeds have been checked: %(items)s' % {
-                        "items": ', '.join(feeds)
-                    }, messages.INFO)
-            return HttpResponseRedirect(reverse('admin:%s_%s_changelist' % ('store', 'feedsubmissioninfo'),
-                                                current_app='admin'))
-
-        context = {
-            **self.admin_site.each_context(request),
-            'title': 'Store selection',
-            'stores': Store.objects.all() if request.user.is_superuser else Store.objects.none(),
-            'media': self.media,
-        }
-
-        request.current_app = self.admin_site.name
-
-        return TemplateResponse(request, "admin/store/inventory/select_store.html", context)
+        return _check_feed_status(self, request, 'admin/store/inventory/select_store.html')
 
     check_sync_status.short_description = "Check Feed Status"
     check_sync_status.allowed_permissions = ('sync',)
@@ -544,8 +545,57 @@ class FeedSubmissionInfoAdmin(admin.ModelAdmin):
                        'store',),
         }),
     )
+    list_filter = ('feed_processing_status',)
 
     actions = ['check_sync_status']
+
+    def get_deleted_objects(self, objs, request):
+        """
+        Find all objects related to ``objs`` that should also be deleted. ``objs``
+        must be a homogeneous iterable of objects (e.g. a QuerySet).
+
+        Return a nested list of strings suitable for display in the
+        template with the ``unordered_list`` filter.
+        """
+        try:
+            objs[0]
+        except IndexError:
+            return [], {}, set(), []
+        else:
+            using = router.db_for_write(FeedSubmissionInfo)
+        collector = FeedObjects(using=using)
+        collector.collect(objs)
+        perms_needed = set()
+
+        def format_callback(obj):
+            no_edit_link = 'Feed Submission Info: %s' % (obj,)
+
+            if not self.has_delete_permission(request, obj):
+                perms_needed.add('FeedSubmissionInfo')
+            try:
+                admin_url = reverse('%s:store_feedsubmissioninfo_change'
+                                    % (self.admin_site.name,),
+                                    None, (quote(obj.pk),))
+            except NoReverseMatch:
+                # Change url doesn't exist -- don't display link to edit
+                return no_edit_link
+
+            # Display a link to the admin page.
+            return format_html('Feed Submission Info: <a href="{}">{}</a>',
+                               admin_url,
+                               obj)
+
+        to_delete = collector.nested(format_callback)
+
+        protected = [format_callback(obj) for obj in collector.protected]
+        model_count = {'FeedSubmissionInfo': len(objs) for model, objs in collector.model_objs.items()}
+
+        return to_delete, model_count, perms_needed, protected
+
+    def check_sync_status(self, request, queryset):
+        return _check_feed_status(self, request, 'admin/store/feedsubmissioninfo/select_store.html')
+
+    check_sync_status.short_description = "Check Feed Status"
 
     def _feed_items(self, obj):
         return ', '.join([item.sku for item in obj.inventory_set.all()])

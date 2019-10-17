@@ -1,0 +1,23 @@
+{% extends "admin/actions.html" %}
+{% load i18n store %}
+{% block actions-form %}
+<input type="hidden" name="action" value="" id="feedsubmissioninfo-form-action">
+{% endblock %}
+{% block actions-submit %}
+{% if user|has_perm:'store.delete_feedsubmissioninfo' %}
+<button type="submit" class="button" title="{% trans 'Delete selected' %}" name="index" value="{{ action_index|default:0 }}" id="feedsubmissioninfo-btn-action-delete"
+        onclick="django.jQuery('#feedsubmissioninfo-form-action')[0].value = 'delete_selected';">{% trans "Delete selected" %}</button>
+{% endif %}
+{% if user|has_perm:'store.sync_inventory' %}
+{% if user.is_superuser %}
+<button type="submit" class="button" title="{% trans 'Check Feed Status' %}" name="index" value="{{ action_index|default:0 }}" id="feedsubmissioninfo-btn-action-check"
+        onclick="django.jQuery('#feedsubmissioninfo-form-action')[0].value = 'check_sync_status';
+        django.jQuery('<input>').attr({type: 'hidden', name: '_selected_action', value: '1'}).appendTo('#changelist-form');">{% trans "Check Feed Status" %}</button>
+{% else %}
+<button type="submit" class="button" title="{% trans 'Check Feed Status' %}" name="index" value="{{ action_index|default:0 }}" id="feedsubmissioninfo-btn-action-check"
+        onclick="django.jQuery('#feedsubmissioninfo-form-action')[0].value = 'check_sync_status';
+        django.jQuery('<input>').attr({type: 'hidden', name: '_selected_action', value: '1'}).appendTo('#changelist-form');
+        django.jQuery('<input>').attr({type: 'hidden', name: 'post', value: '1'}).appendTo('#changelist-form');">{% trans "Check Feed Status" %}</button>
+{% endif %}
+{% endif %}
+{% endblock %}
