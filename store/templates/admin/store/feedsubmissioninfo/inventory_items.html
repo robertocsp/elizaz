@@ -1,0 +1,90 @@
+{% extends "admin/base_site.html" %}
+{% load i18n l10n admin_urls static store %}
+
+{% block extrahead %}
+    {{ block.super }}
+    {{ media }}
+    <script type="text/javascript" src="{% static 'admin/js/cancel.js' %}"></script>
+{% endblock %}
+
+{% block bodyclass %}{{ block.super }} app-store model-feedsubmissioninfo store-selection select-store{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+<a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
+&rsaquo; <a href="{% url 'admin:app_list' app_label='store' %}">Store</a>
+&rsaquo; <a href="{% url 'admin:store_feedsubmissioninfo_changelist' %}">Feed submission infos</a>
+&rsaquo; {{ feedSubmissionInfo.feed_submission_id }} - {{ feedSubmissionInfo.feed_type }}
+</div>
+{% endblock %}
+
+{% block content %}
+    <h2>{% trans "Items" %}</h2>
+
+<div class="results">
+<table id="result_list">
+<thead>
+<tr>
+<th scope="col" class="column-sku">
+   <div class="text"><span> SKU</span></div>
+   <div class="clear"></div>
+</th>
+<th scope="col" class="column-upc">
+   <div class="text"><span> UPC</span></div>
+   <div class="clear"></div>
+</th>
+<th scope="col" class="column-_asin">
+   <div class="text"><span> ASIN</span></div>
+   <div class="clear"></div>
+</th>
+<th scope="col" class="column-_item_name">
+   <div class="text"><span> Item Name</span></div>
+   <div class="clear"></div>
+</th>
+<th scope="col" class="column-sku_vendor">
+   <div class="text"><span> SKU Vendor</span></div>
+   <div class="clear"></div>
+</th>
+<th scope="col" class="column-standard_price">
+   <div class="text"><span> Standard Price</span></div>
+   <div class="clear"></div>
+</th>
+<th scope="col" class="column-quantity">
+   <div class="text"><span> Quantity</span></div>
+   <div class="clear"></div>
+</th>
+<th scope="col" class="column-condition">
+   <div class="text"><span> Condition</span></div>
+   <div class="clear"></div>
+</th>
+<th scope="col" class="column-handling_time">
+   <div class="text"><span> Handling Time</span></div>
+   <div class="clear"></div>
+</th>
+</tr>
+</thead>
+<tbody>
+{% for item in items %}
+<tr class="{% if forloop.counter|divisibleby:2 %}row2{% else %}row1{% endif %}">
+    <th class="field-sku">{{ item.sku }}</th>
+    <td class="field-upc">{{ item.upc }}</td>
+    <td class="field-asin">{{ item.asin }}</td>
+    <td class="field-item_name">{{ item.item_name }}</td>
+    <td class="field-sku_vendor">{{ item.sku_vendor }}</td>
+    <td class="field-standard_price">{{ item.standard_price }}</td>
+    <td class="field-quantity">{{ item.quantity }}</td>
+    <td class="field-condition">
+        {% display_condition item as condition_to_display %}
+        {{ condition_to_display }}
+    </td>
+    <td class="field-handling_time">{{ item.handling_time }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+<br>
+<div>
+    <a href="{% url 'admin:store_feedsubmissioninfo_changelist' %}" class="button">{% trans "Take me back" %}</a>
+</div>
+{% endblock %}

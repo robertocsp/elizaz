@@ -1,3 +1,4 @@
+import json
 import logging
 
 from django import forms
@@ -547,7 +548,7 @@ class FeedSubmissionInfoAdmin(admin.ModelAdmin):
     )
     list_filter = ('feed_processing_status',)
 
-    actions = ['check_sync_status']
+    actions = ['check_sync_status', 'view_feed_items']
 
     def get_deleted_objects(self, objs, request):
         """
@@ -597,8 +598,26 @@ class FeedSubmissionInfoAdmin(admin.ModelAdmin):
 
     check_sync_status.short_description = "Check Feed Status"
 
+    def view_feed_items(self, request, queryset):
+        context = {
+            **self.admin_site.each_context(request),
+            'title': 'Inventory Items',
+            'feedSubmissionInfo': queryset[0],
+            'items': queryset[0].inventory_set.all(),
+            'media': self.media,
+        }
+        request.current_app = self.admin_site.name
+        return TemplateResponse(request, 'admin/store/feedsubmissioninfo/inventory_items.html', context)
+
     def _feed_items(self, obj):
-        return ', '.join([item.sku for item in obj.inventory_set.all()])
+        return mark_safe(
+            '<a href="javascript: void(0)" onclick="django.jQuery(\'%s\')[0].value = \'%s\'; '
+            'django.jQuery(\'%s\').attr({type: \'%s\', name: \'%s\', value: \'%s\'}).appendTo(\'%s\'); '
+            'django.jQuery(\'%s\')[0].submit();" '
+            'class="viewlink"></a>&nbsp;&nbsp;(%s)' %
+            ('#feedsubmissioninfo-form-action', 'view_feed_items', '<input>', 'hidden', '_selected_action', obj.pk,
+             '#changelist-form', '#changelist-form', obj.inventory_set.count())
+        )
     _feed_items.short_description = 'Feed Items'
 
     def has_add_permission(self, request):

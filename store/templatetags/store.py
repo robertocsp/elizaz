@@ -1,6 +1,8 @@
 from django import template
 from django.urls import reverse
 
+from utils.helper import mws_normalize_condition
+
 register = template.Library()
 
 
@@ -15,6 +17,11 @@ def get_user_change_url(user, **kwargs):
                        args=(user.store.id,),
                        current_app='admin')
     return None
+
+
+@register.simple_tag
+def display_condition(item, **kwargs):
+    return mws_normalize_condition(item.condition)
 
 
 @register.filter
