@@ -21,6 +21,7 @@ from django.utils.decorators import method_decorator
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from django.views.decorators.csrf import csrf_protect
+from mws import MWSError
 
 from store.models import Store, StoreForm, StoreFile, inventory_form_factory, Inventory, FeedSubmissionInfo
 from utils.aws import update_store, ThrottlingException, get_feed_submission_list, get_feed_submission_result, \
@@ -310,6 +311,8 @@ def _check_feed_status(modeladmin, request, select_store_template):
                 store.seller_id,
                 store.auth_token,
                 feeds)
+            feeds_ok = []
+            feeds_nok = []
             for feed_submission in feed_submission_list:
                 feed_submission_info = FeedSubmissionInfo.objects.get(feed_submission_id=
                                                                       feed_submission['FeedSubmissionId']['value'])
@@ -326,13 +329,24 @@ def _check_feed_status(modeladmin, request, select_store_template):
                             store.auth_token,
                             feed_submission['FeedSubmissionId']['value']
                         )
+                        feeds_ok.append(feed_submission['FeedSubmissionId']['value'])
                     except DataCorruptionException:
                         feed_submission_info.feed_processing_status = '_DATA_CORRUPTION_'
+                        feeds_nok.append(feed_submission['FeedSubmissionId']['value'])
+                    except MWSError as e:
+                        logger.error(e)
+                        feeds_nok.append(feed_submission['FeedSubmissionId']['value'])
+                else:
+                    feeds_ok.append(feed_submission['FeedSubmissionId']['value'])
                 feed_submission_info.save()
-            if len(feeds):
+            if len(feeds_ok):
                 modeladmin.message_user(request, 'The following feeds have been checked: %(items)s' % {
-                    "items": ', '.join(feeds)
+                    "items": ', '.join(feeds_ok)
                 }, messages.INFO)
+            if len(feeds_nok):
+                modeladmin.message_user(request, 'The following feeds have NOT been checked: %(items)s' % {
+                    "items": ', '.join(feeds_nok)
+                }, messages.ERROR)
         return HttpResponseRedirect(reverse('admin:%s_%s_changelist' % ('store', 'feedsubmissioninfo'),
                                             current_app='admin'))
     context = {
@@ -402,7 +416,12 @@ class InventoryAdmin(admin.ModelAdmin):
         if not self.has_delete_permission(request):
             raise PermissionDenied
         if request.POST.get('post'):
-            update_aws(self, request, queryset, 'delete')
+            try:
+                update_aws(self, request, queryset, 'delete')
+            except MWSError as e:
+                logger.error(e)
+                self.message_user(request, 'Amazon was unable to process your action, please check the logs for more '
+                                           'details.', messages.ERROR)
             delete_selected_(self, request, queryset)
             return None
         return delete_selected_(self, request, queryset)
@@ -457,22 +476,22 @@ class InventoryAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         if request.user.is_superuser or request.user.store:
-            return super(InventoryAdmin, self).has_add_permission(request)
+            return super().has_add_permission(request)
         return False
 
     def has_delete_permission(self, request, obj=None):
         if request.user.is_superuser or request.user.store:
-            return super(InventoryAdmin, self).has_delete_permission(request, obj)
+            return super().has_delete_permission(request, obj)
         return False
 
     def has_change_permission(self, request, obj=None):
         if request.user.is_superuser or request.user.store:
-            return super(InventoryAdmin, self).has_change_permission(request, obj)
+            return super().has_change_permission(request, obj)
         return False
 
     def has_view_permission(self, request, obj=None):
         if request.user.is_superuser or request.user.store:
-            return super(InventoryAdmin, self).has_view_permission(request, obj)
+            return super().has_view_permission(request, obj)
         return False
 
     def get_readonly_fields(self, request, obj=None):

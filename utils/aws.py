@@ -285,3 +285,8 @@ class HandleBusinessExceptionMiddleware(MiddlewareMixin):
             messages.error(request, message)
             logger.error(exception)
             return RedirectToRefererResponse(request)
+        if isinstance(exception, ConnectionError):
+            message = 'Amazon was unable to process your action, please check the logs for more details.'
+            messages.error(request, message)
+            logger.error(exception)
+            return RedirectToRefererResponse(request)
