@@ -34,7 +34,7 @@ with open(os.path.join(CONFIG_DIR, 'keys.txt')) as keys_file:
             MWS_SECRET_KEY = key_value_pair[1]
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
 
 ALLOWED_HOSTS = ['localhost', '54.152.2.199']
 

@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 from django import forms
@@ -7,11 +8,14 @@ from django.db.models.signals import post_save, post_delete, pre_save
 from django.dispatch import receiver
 from django.forms import ModelForm
 from django.utils import timezone
+from mws import MWSError
 
 from store.validators import validate_csv_file_extension
 from utils import aws
 from utils.helper import normalize_condition, get_conditions_tuple
 from utils.storage import OverWriteStorage, clear_folder
+
+logger = logging.getLogger(__name__)
 
 _UPDATE_INVENTORY = 'update_inventory'
 _DELETE_CSV = 'delete_csv'
@@ -108,12 +112,20 @@ def populate_inventory(columns, instance, inventory):
     inventory.csv_filename = str(instance.csv).rsplit('/', 1)[1]
     inventory.csv_datetime = instance.csv_datetime
     inventory.csv_update_number = instance.csv_update_number
-    product = aws.get_items(instance.seller_id, instance.auth_token, [inventory.upc])
+    try:
+        product = aws.get_items(instance.seller_id, instance.auth_token, [inventory.upc])
+    except MWSError as e:
+        logger.error(e)
+        return
+    logger.debug('product.parsed')
+    logger.debug(product.parsed)
     if product.parsed:
         if product.parsed['status'] and product.parsed['status']['value'] == 'ClientError':
-            print(product.parsed['Error']['Message']['value'])
+            logger.error(product.parsed['Error']['Message']['value'])
         elif product.parsed['Products'] and product.parsed['Products']['Product']:
             product_parsed = product.parsed['Products']['Product']
+            if isinstance(product_parsed, list):
+                product_parsed = product_parsed[0]
             if product_parsed['Identifiers'] and product_parsed['Identifiers']['MarketplaceASIN'] and \
                     product_parsed['Identifiers']['MarketplaceASIN']['ASIN']:
                 asin = product_parsed['Identifiers']['MarketplaceASIN']['ASIN']
