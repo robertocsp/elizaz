@@ -132,7 +132,8 @@ USE_TZ = True
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/2.2/howto/static-files/
-
+if DEBUG is False:
+    STATIC_ROOT = '/home/ubuntu/amazonseller/static/'
 STATIC_URL = '/static/'
 
 AUTH_USER_MODEL = 'custom_auth.User'
