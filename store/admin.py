@@ -160,6 +160,8 @@ def update_aws(modeladmin, request, queryset, operation):
             objects = set()
             throttlings = set()
             for obj in queryset.order_by('store'):
+                if obj.store is None:
+                    continue
                 # obj_display = str(obj)
                 if len(objects):
                     previous_obj = objects.pop()
@@ -168,17 +170,18 @@ def update_aws(modeladmin, request, queryset, operation):
                         call_mws(objects, previous_obj, throttlings, operation)
                         objects.clear()
                 objects.add(obj)
-            previous_obj = objects.pop()
-            objects.add(previous_obj)
-            call_mws(objects, previous_obj, throttlings, operation)
-            # modeladmin.log_deletion(request, obj, obj_display)
-            if len(throttlings):
-                for throttling in throttlings:
-                    modeladmin.message_user(request, str(throttling), messages.WARNING)
-            else:
-                modeladmin.message_user(request, 'Successfully fed %(count)d %(items)s.' % {
-                    "count": n, "items": model_ngettext(modeladmin.opts, n)
-                }, messages.SUCCESS)
+            if len(objects):
+                previous_obj = objects.pop()
+                objects.add(previous_obj)
+                call_mws(objects, previous_obj, throttlings, operation)
+                # modeladmin.log_deletion(request, obj, obj_display)
+                if len(throttlings):
+                    for throttling in throttlings:
+                        modeladmin.message_user(request, str(throttling), messages.WARNING)
+                else:
+                    modeladmin.message_user(request, 'Successfully fed %(count)d %(items)s.' % {
+                        "count": n, "items": model_ngettext(modeladmin.opts, n)
+                    }, messages.SUCCESS)
     # Return None to display the change list page again.
     return None
 
